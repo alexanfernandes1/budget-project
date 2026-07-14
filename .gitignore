@@ -1,0 +1,13 @@
+# Sortie de build (générée depuis src/ + data/)
+dist/
+
+# Dépendances Node (si tests locaux)
+node_modules/
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Sauvegardes JSON exportées depuis l'app
+budget_alex_sauvegarde_*.json
+budget_charlotte_sauvegarde_*.json
