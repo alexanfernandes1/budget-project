@@ -45,6 +45,9 @@ function deriveCategoryType(item){
   for(const [name, re] of CAT_RULES){ if(re.test(item)) return name; }
   return 'Autre';
 }
+// Une ligne peut porter une catégorie choisie explicitement (via la modale) ; à défaut,
+// on retombe sur la déduction automatique par mots-clés (lignes historiques importées).
+function getCategoryType(it){ return (it && it.categorieType) || deriveCategoryType(it && it.item); }
 const CATEGORY_TYPES = ['Alimentation','Transport','Logement & charges','Abonnements','Enfant','Santé','Épargne','Prêt & crédit','Cadeaux & shopping','Loisirs & voyages','Salaire','Autre'];
 // Catégories dont la nature est habituellement récurrente (loyer, salaire, abonnements...) :
 // sert de valeur par défaut intelligente pour les lignes historiques importées, qui n'ont pas
@@ -55,11 +58,24 @@ function isRecurringByDefault(item){ return RECURRING_DEFAULT_CATEGORIES.include
 // de répartition par catégorie ne sont donc affichés qu'à partir de ce mois.
 const CATEGORY_START_KEY = '2026-08';
 function hasCategoryData(key){ return key >= CATEGORY_START_KEY; }
-const CAT_COLORS = {
+// Palette sombre : lisible sur fonds foncés (thème sombre). Utilisée aussi telle quelle
+// pour les remplissages du donut, où le contraste avec le texte n'entre pas en jeu.
+const CAT_COLORS_DARK = {
   'Alimentation':'#7fd9cd','Transport':'#d9b45f','Logement & charges':'#e0836f','Abonnements':'#8fa8d9',
   'Enfant':'#c98fd9','Santé':'#5fbf8f','Épargne':'#4fb3a9','Prêt & crédit':'#a3a3a3','Cadeaux & shopping':'#e0c07f',
   'Loisirs & voyages':'#e08fc0','Salaire':'#5fbf8f','Autre':'#7f92a3'
 };
+// Palette claire : mêmes teintes assombries pour rester lisibles en texte sur fond clair
+// (les pastels sombres ci-dessus étaient quasi invisibles en thème clair, contraste <2:1).
+const CAT_COLORS_LIGHT = {
+  'Alimentation':'#166f63','Transport':'#8f5c09','Logement & charges':'#b5462d','Abonnements':'#3d5da3',
+  'Enfant':'#8a3aa8','Santé':'#177049','Épargne':'#1f7a70','Prêt & crédit':'#5f5f5f','Cadeaux & shopping':'#7a5c0e',
+  'Loisirs & voyages':'#a13a76','Salaire':'#177049','Autre':'#54636d'
+};
+function getCatColor(cat){
+  const pal = document.body.classList.contains('dark') ? CAT_COLORS_DARK : CAT_COLORS_LIGHT;
+  return pal[cat] || pal['Autre'];
+}
 
 function loadOverlay(){
   try{ return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }catch(e){ return {}; }
@@ -149,7 +165,7 @@ function computeMonthStats(m){
     }else{
       if(isIncome || signedIsCredit) prevRec += val; else prevDep += val;
     }
-    const catType = deriveCategoryType(it.item);
+    const catType = getCategoryType(it);
     if(effectiveIsExpense || (!isIncome && signedIsCredit)){
       const key = catType;
       byCat[key] = (byCat[key]||0) + (signedIsCredit? -val : val);
@@ -289,9 +305,9 @@ function renderKpiBar(m){
   const cls = v => v===null||v===undefined ? '' : (v>=0?'pos':'neg');
   const epargne = s.livretA; // livret A principal comme indicateur d'épargne
   bar.innerHTML = `
-    <div class="kpi"><div class="k-label">En cours</div><div class="k-value ${cls(live.encours)}">${fmtShort(live.encours)}</div></div>
-    <div class="kpi"><div class="k-label">Prévisionnel</div><div class="k-value ${cls(live.previsionnel)}">${fmtShort(live.previsionnel)}</div></div>
-    <div class="kpi"><div class="k-label">Épargne (Livret A)</div><div class="k-value">${fmtShort(epargne)}</div></div>
+    <div class="kpi"><div class="k-label">En cours</div><div class="k-value ${cls(live.encours)}">${fmt(live.encours)}</div></div>
+    <div class="kpi"><div class="k-label">Prévisionnel</div><div class="k-value ${cls(live.previsionnel)}">${fmt(live.previsionnel)}</div></div>
+    <div class="kpi"><div class="k-label">Épargne (Livret A)</div><div class="k-value">${fmt(epargne)}</div></div>
   `;
 }
 function renderTxRows(m){
@@ -299,7 +315,7 @@ function renderTxRows(m){
   if(!m){ tbody.innerHTML = `<tr><td colspan="6" class="empty">Mois vide.</td></tr>`; return; }
   let items = m.items.filter(it=>it.item || it.montant);
   if(txFilter.text) items = items.filter(it=> (it.item||'').toLowerCase().includes(txFilter.text.toLowerCase()));
-  if(txFilter.cat!=='all') items = items.filter(it=> deriveCategoryType(it.item)===txFilter.cat);
+  if(txFilter.cat!=='all') items = items.filter(it=> getCategoryType(it)===txFilter.cat);
   if(txFilter.status==='done') items = items.filter(it=>it.traite);
   if(txFilter.status==='pending') items = items.filter(it=>!it.traite);
   if(txFilter.rec==='rec') items = items.filter(it=>it.recurrent);
@@ -308,12 +324,12 @@ function renderTxRows(m){
   if(!items.length){ tbody.innerHTML = `<tr><td colspan="6" class="empty">Aucune ligne ne correspond.</td></tr>`; return; }
 
   tbody.innerHTML = items.map(it=>{
-    const catType = deriveCategoryType(it.item);
+    const catType = getCategoryType(it);
     const isCredit = it.montant<0;
     return `<tr data-id="${it._id}">
       <td><button class="chk ${it.traite?'done':''}" data-toggle="${it._id}">${it.traite?'✓':''}</button></td>
       <td>${it.recurrent?'<span title="Récurrent" style="opacity:.6;margin-right:4px;">🔁</span>':''}${it.item? esc(it.item) : '<span style="color:var(--muted-2)">(sans libellé)</span>'}</td>
-      <td><span class="tag" style="color:${CAT_COLORS[catType]||'inherit'}">${catType}</span></td>
+      <td><span class="tag" style="color:${getCatColor(catType)}">${catType}</span></td>
       <td><span class="tag">${esc(it.categorie)||'—'}</span></td>
       <td class="amt ${isCredit?'pos':'neg'}">${it.montant!==null&&it.montant!==undefined? fmt(it.montant):'—'}</td>
       <td class="row-actions"><button class="icon-btn" data-edit="${it._id}">✎</button></td>
@@ -374,9 +390,10 @@ function openItemModal(id){
     const isCredit = it.montant<0;
     document.getElementById('f_montant').value = it.montant!==null? Math.abs(it.montant):'';
     document.getElementById('f_sens').value = isCredit? 'recette':'depense';
-    document.getElementById('f_categorie_type').value = deriveCategoryType(it.item);
+    document.getElementById('f_categorie_type').value = getCategoryType(it);
     document.getElementById('f_categorie').value = it.categorie || 'LCL';
-    document.getElementById('f_echeance').value = it.echeance || '';
+    document.getElementById('f_echeance').value = it.echeance || new Date().toISOString().slice(0,10);
+    document.getElementById('f_echeance_confirm').checked = !!it.echeance;
     document.getElementById('f_traite').checked = !!it.traite;
     document.getElementById('f_recurrent').checked = !!it.recurrent;
   }else{
@@ -385,15 +402,24 @@ function openItemModal(id){
     document.getElementById('f_sens').value = 'depense';
     document.getElementById('f_categorie_type').value = 'Autre';
     document.getElementById('f_categorie').value = 'LCL';
-    document.getElementById('f_echeance').value = '';
+    document.getElementById('f_echeance').value = new Date().toISOString().slice(0,10);
+    document.getElementById('f_echeance_confirm').checked = false;
     document.getElementById('f_traite').checked = false;
     document.getElementById('f_recurrent').checked = false;
   }
+  categoryTypeTouched = false;
   bg.classList.add('show');
 }
+// Pour une nouvelle ligne (tant que l'utilisateur n'a pas choisi la catégorie lui-même),
+// on la déduit automatiquement du libellé au fil de la saisie.
+let categoryTypeTouched = false;
+document.getElementById('f_item').addEventListener('input', e=>{
+  if(!editingId && !categoryTypeTouched) document.getElementById('f_categorie_type').value = deriveCategoryType(e.target.value);
+});
 // Pour une nouvelle ligne, suggère automatiquement "récurrent" si la catégorie choisie
 // est habituellement fixe (loyer, salaire, abonnement...) — reste modifiable par l'utilisateur.
 document.getElementById('f_categorie_type').addEventListener('change', e=>{
+  categoryTypeTouched = true;
   if(!editingId) document.getElementById('f_recurrent').checked = RECURRING_DEFAULT_CATEGORIES.includes(e.target.value);
 });
 function closeItemModal(){ document.getElementById('itemModalBg').classList.remove('show'); editingId=null; }
@@ -403,7 +429,8 @@ function saveItemModal(){
   if(isNaN(montant)) montant = null;
   const sens = document.getElementById('f_sens').value;
   const categorie = document.getElementById('f_categorie').value;
-  const echeance = document.getElementById('f_echeance').value || null;
+  const categorieType = document.getElementById('f_categorie_type').value;
+  const echeance = document.getElementById('f_echeance_confirm').checked ? (document.getElementById('f_echeance').value || null) : null;
   const traite = document.getElementById('f_traite').checked;
   const recurrent = document.getElementById('f_recurrent').checked;
   if(montant!==null && sens==='recette' && categorie!=='Salaire') montant = -Math.abs(montant);
@@ -413,9 +440,9 @@ function saveItemModal(){
   if(!m){ m = {summary:{}, items:[]}; }
   let items = [...m.items];
   if(editingId){
-    items = items.map(it=> it._id===editingId? {...it, item, montant, categorie, echeance, traite, recurrent} : it);
+    items = items.map(it=> it._id===editingId? {...it, item, montant, categorie, categorieType, echeance, traite, recurrent} : it);
   }else{
-    items.push({ item, montant, categorie, echeance, traite, recurrent });
+    items.push({ item, montant, categorie, categorieType, echeance, traite, recurrent });
   }
   setMonthItems(currentKey, items);
   closeItemModal();
@@ -616,7 +643,7 @@ function drawDonut(id, byCat, legendId){
     ctx.moveTo(cx,cy);
     ctx.arc(cx,cy,rOuter,ang,ang+slice);
     ctx.closePath();
-    ctx.fillStyle = CAT_COLORS[cat]||'#7f92a3';
+    ctx.fillStyle = getCatColor(cat);
     ctx.fill();
     ang += slice;
   });
@@ -627,7 +654,7 @@ function drawDonut(id, byCat, legendId){
   ctx.fillText(fmtShort(total), cx, cy+4);
 
   if(legend){
-    legend.innerHTML = entries.map(([cat,val])=>`<div><span class="dot" style="background:${CAT_COLORS[cat]||'#7f92a3'}"></span>${cat} — ${fmt(val)} (${Math.round(val/total*100)}%)</div>`).join('');
+    legend.innerHTML = entries.map(([cat,val])=>`<div><span class="dot" style="background:${getCatColor(cat)}"></span>${cat} — ${fmt(val)} (${Math.round(val/total*100)}%)</div>`).join('');
   }
 }
 
@@ -659,6 +686,7 @@ document.querySelectorAll('nav.tabs button').forEach(btn=>{
     btn.classList.add('active');
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-'+btn.dataset.view).classList.add('active');
+    window.scrollTo(0, 0); // change d'onglet = nouvel écran : on repart du haut, pas du scroll laissé par l'onglet précédent
     updateScrollJumpButtons();
   });
 });
@@ -833,16 +861,16 @@ async function getGraphToken(){
     const res = await msalInstance.acquireTokenSilent({ scopes: SYNC_SCOPES, account: syncAccount });
     return res.accessToken;
   }catch(e){
-    console.warn('silent token failed, trying interactive popup', e);
-    try{
-      const res = await msalInstance.acquireTokenPopup({ scopes: SYNC_SCOPES, account: syncAccount });
-      return res.accessToken;
-    }catch(e2){
-      console.error('interactive token failed', e2);
-      setSyncStatus('error', 'Reconnexion nécessaire');
-      showToast('Reconnexion à OneDrive nécessaire.');
-      return null;
-    }
+    // Ne PAS enchaîner sur acquireTokenPopup ici : après un premier await (acquireTokenSilent),
+    // le geste utilisateur d'origine est déjà "consommé" et les navigateurs (surtout Safari iOS)
+    // bloquent silencieusement ce second popup — l'utilisateur cliquait alors sans rien voir se
+    // passer. On efface plutôt le compte pour qu'un nouveau clic relance signIn() (loginPopup),
+    // qui est lui appelé en tout premier depuis le clic et bénéficie d'un geste utilisateur frais.
+    console.warn('silent token failed, reconnexion nécessaire', e);
+    syncAccount = null;
+    setSyncStatus('error', 'Reconnexion nécessaire');
+    showToast('Reconnexion à OneDrive nécessaire — appuie à nouveau sur le bouton.');
+    return null;
   }
 }
 

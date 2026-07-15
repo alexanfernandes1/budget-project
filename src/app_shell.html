@@ -383,8 +383,13 @@
       </div>
     </div>
     <div class="field">
-      <label>Échéance (optionnel)</label>
-      <input type="date" id="f_echeance">
+      <label>Date</label>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="date" id="f_echeance" style="flex:1;">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--muted);white-space:nowrap;">
+          <input type="checkbox" id="f_echeance_confirm" style="width:auto;"> Valider
+        </label>
+      </div>
     </div>
     <div class="field">
       <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;">
