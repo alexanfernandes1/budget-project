@@ -978,11 +978,20 @@ initMsal();
 // une saisie en cours dans la modale.
 const PAGE_LAST_MODIFIED = document.lastModified;
 let updateCheckInFlight = false;
+// URL avec paramètre anti-cache : nécessaire à la fois pour la vérification (contourner un
+// éventuel cache CDN/WebKit qui ignorerait "cache:no-store") et pour le rechargement lui-même
+// — un simple location.reload() peut être resservi depuis le cache local d'iOS sans repasser
+// par le réseau, ce qui donne l'impression que le bouton "Recharger" ne fait rien.
+function bustCacheUrl(){
+  const url = new URL(location.href);
+  url.searchParams.set('_v', Date.now().toString());
+  return url.toString();
+}
 async function checkForNewVersion(){
   if(updateCheckInFlight) return;
   updateCheckInFlight = true;
   try{
-    const res = await fetch(location.href, { method:'HEAD', cache:'no-store' });
+    const res = await fetch(bustCacheUrl(), { method:'HEAD', cache:'no-store' });
     const latest = res.headers.get('last-modified');
     if(latest && latest !== PAGE_LAST_MODIFIED) showUpdateBanner();
   }catch(e){ /* hors-ligne ou réseau indisponible : on retentera au prochain retour au premier plan */ }
@@ -995,7 +1004,7 @@ function showUpdateBanner(){
   b.className = 'update-banner';
   b.innerHTML = `Nouvelle version disponible <button id="btnReloadApp">Recharger</button>`;
   document.body.appendChild(b);
-  document.getElementById('btnReloadApp').addEventListener('click', ()=> location.reload());
+  document.getElementById('btnReloadApp').addEventListener('click', ()=> location.replace(bustCacheUrl()));
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') checkForNewVersion(); });
 window.addEventListener('pageshow', checkForNewVersion);
