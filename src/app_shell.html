@@ -259,7 +259,8 @@
     z-index:60;opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;
     font-weight:500;
   }
-  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);pointer-events:auto;}
+  .toast-action{color:inherit;text-decoration:underline;font-weight:700;margin-left:8px;cursor:pointer;white-space:nowrap;}
 
   footer.data-tools{
     max-width:1100px;margin:0 auto;padding:8px 18px 30px;display:flex;gap:8px;flex-wrap:wrap;
@@ -360,6 +361,10 @@
     <div class="field">
       <label>Libellé</label>
       <input type="text" id="f_item" placeholder="Ex : Courses, Netflix, Essence…">
+    </div>
+    <div class="field">
+      <label>Mois de facturation</label>
+      <select id="f_month"></select>
     </div>
     <div class="two-col">
       <div class="field">
