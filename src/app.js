@@ -969,6 +969,37 @@ window.addEventListener('offline', ()=> setSyncStatus('error', 'Hors ligne'));
 
 initMsal();
 
+// ===================== DÉTECTION DE NOUVELLE VERSION (écran d'accueil iOS) =====================
+// Une appli ajoutée à l'écran d'accueil (apple-mobile-web-app-capable) est souvent gardée
+// suspendue par iOS et rouverte sans recharger le réseau, contrairement à un onglet Safari.
+// On compare donc nous-mêmes, à chaque retour au premier plan, la date de dernière
+// modification du document chargé à celle du fichier actuellement publié (en-tête
+// Last-Modified), et on propose un rechargement — jamais automatique, pour ne pas perdre
+// une saisie en cours dans la modale.
+const PAGE_LAST_MODIFIED = document.lastModified;
+let updateCheckInFlight = false;
+async function checkForNewVersion(){
+  if(updateCheckInFlight) return;
+  updateCheckInFlight = true;
+  try{
+    const res = await fetch(location.href, { method:'HEAD', cache:'no-store' });
+    const latest = res.headers.get('last-modified');
+    if(latest && latest !== PAGE_LAST_MODIFIED) showUpdateBanner();
+  }catch(e){ /* hors-ligne ou réseau indisponible : on retentera au prochain retour au premier plan */ }
+  finally{ updateCheckInFlight = false; }
+}
+function showUpdateBanner(){
+  if(document.getElementById('updateBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'updateBanner';
+  b.className = 'update-banner';
+  b.innerHTML = `Nouvelle version disponible <button id="btnReloadApp">Recharger</button>`;
+  document.body.appendChild(b);
+  document.getElementById('btnReloadApp').addEventListener('click', ()=> location.reload());
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') checkForNewVersion(); });
+window.addEventListener('pageshow', checkForNewVersion);
+
 // ===================== INIT =====================
 populateSelects();
 refreshAll();
