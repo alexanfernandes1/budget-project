@@ -133,11 +133,19 @@ function shiftKey(key, delta){
   while(m<1){m+=12;y--;}
   return `${y}-${String(m).padStart(2,'0')}`;
 }
-function showToast(msg){
+// opts.actionLabel/opts.onAction affichent un lien cliquable dans le toast (ex : "Voir" pour
+// sauter vers un autre mois) sans interrompre la saisie en cours sur le mois affiché.
+function showToast(msg, opts){
   const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(()=>t.classList.remove('show'), 2200);
+  if(opts && opts.actionLabel && opts.onAction){
+    t.innerHTML = `${esc(msg)} <span class="toast-action">${esc(opts.actionLabel)}</span>`;
+    t.querySelector('.toast-action').addEventListener('click', ()=>{ opts.onAction(); t.classList.remove('show'); });
+  }else{
+    t.textContent = msg;
+  }
+  t.classList.add('show');
+  showToast._t = setTimeout(()=>t.classList.remove('show'), opts && opts.actionLabel ? 4000 : 2200);
 }
 function esc(s){
   return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -413,6 +421,9 @@ function openItemModal(id){
   const bg = document.getElementById('itemModalBg');
   document.getElementById('itemModalTitle').textContent = id? 'Modifier la ligne' : 'Nouvelle ligne';
   document.getElementById('btnDeleteItem').style.display = id? 'inline-block':'none';
+  const monthSel = document.getElementById('f_month');
+  monthSel.innerHTML = keys.map(k=>`<option value="${k}">${monthLabel(k)}</option>`).join('');
+  monthSel.value = currentKey;
   if(id){
     const m = getMonth(currentKey);
     const it = m.items.find(x=>x._id===id);
@@ -476,18 +487,38 @@ function saveItemModal(){
   if(montant!==null && sens==='recette' && categorie!=='Salaire') montant = -Math.abs(montant);
   else if(montant!==null) montant = Math.abs(montant);
 
-  let m = getMonth(currentKey);
-  if(!m){ m = {summary:{}, items:[]}; }
-  let items = [...m.items];
-  if(editingId){
-    items = items.map(it=> it._id===editingId? {...it, item, montant, categorie, categorieType, echeance, traite, recurrent} : it);
+  const monthField = document.getElementById('f_month').value;
+  const targetKey = keys.includes(monthField) ? monthField : currentKey;
+  const wasEditing = !!editingId;
+  const payload = { item, montant, categorie, categorieType, echeance, traite, recurrent };
+
+  if(targetKey === currentKey){
+    let m = getMonth(currentKey);
+    if(!m){ m = {summary:{}, items:[]}; }
+    let items = [...m.items];
+    if(wasEditing) items = items.map(it=> it._id===editingId? {...it, ...payload} : it);
+    else items.push(payload);
+    setMonthItems(currentKey, items);
   }else{
-    items.push({ item, montant, categorie, categorieType, echeance, traite, recurrent });
+    // Ligne saisie/déplacée vers un autre mois que celui affiché : on garde currentKey
+    // inchangé (l'utilisateur reste sur sa page) et on écrit dans les données du mois cible.
+    if(wasEditing){
+      const cur = getMonth(currentKey);
+      setMonthItems(currentKey, cur.items.filter(it=>it._id!==editingId));
+    }
+    const target = getMonth(targetKey) || {summary:{}, items:[]};
+    setMonthItems(targetKey, [...target.items, payload]);
   }
-  setMonthItems(currentKey, items);
+
   closeItemModal();
   refreshAll();
-  showToast('Ligne enregistrée.');
+
+  if(targetKey === currentKey){
+    showToast('Ligne enregistrée.');
+  }else{
+    const verb = wasEditing ? 'déplacée vers' : 'ajoutée à';
+    showToast(`Ligne ${verb} ${monthLabel(targetKey)}.`, { actionLabel:'Voir', onAction: ()=>{ currentKey = targetKey; refreshAll(); } });
+  }
 }
 function deleteItemModal(){
   if(!editingId) return;
