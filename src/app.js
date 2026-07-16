@@ -210,15 +210,16 @@ const LIVRET_ACCOUNT_FIELD = {
 // vers le compte courant. Les lignes non traitées n'affectent pas encore le solde affiché.
 function computeLiveLivretBalances(m){
   const s = m.summary || {};
-  const bases = {
-    livretA: s.livretA ?? 0,
-    livretA_leandre: s.livretA_leandre ?? 0,
-    livretDDS: s.livretDDS ?? 0,
-    livretJoint: s.livretJoint ?? 0
-  };
+  // null/undefined = ce profil ne possède pas ce livret : on le laisse tel quel (affiché "—"),
+  // sans le confondre avec un livret existant à 0€.
+  const bases = {};
+  for(const field of Object.values(LIVRET_ACCOUNT_FIELD)){
+    bases[field] = (s[field]===null || s[field]===undefined) ? null : s[field];
+  }
   (m.items||[]).forEach(it=>{
     const field = LIVRET_ACCOUNT_FIELD[it.categorie];
     if(!field || !it.traite || it.montant===null || it.montant===undefined) return;
+    if(bases[field]===null) return;
     bases[field] += it.montant;
   });
   return bases;
