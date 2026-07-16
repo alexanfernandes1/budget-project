@@ -42,10 +42,13 @@ function build(profileName) {
   const msal = fs.readFileSync(path.join(SRC, 'msal-browser.min.js'), 'utf8');
   const seed = fs.readFileSync(path.join(DATA, p.data), 'utf8');
 
-  // Personnalisation (titre + marque) — le shell source contient les valeurs "Alex" par défaut
+  // Personnalisation (titre + marque + identifiant de profil) — le shell source contient
+  // les valeurs "alex" par défaut. L'identifiant de profil isole la synchro OneDrive de
+  // chaque profil (fichier distant dédié), même si les deux comptes Microsoft coïncident.
   shell = shell
     .replace('Budget Alex — Suivi personnel', p.title)
-    .replace('Budget <em>Alex</em>', p.brand);
+    .replace('Budget <em>Alex</em>', p.brand)
+    .replace('data-profile="alex"', `data-profile="${profileName}"`);
 
   // Injection des placeholders
   for (const ph of ['__MSAL_JS__', '__SEED_DATA__', '__APP_JS__']) {

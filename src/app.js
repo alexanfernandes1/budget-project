@@ -197,6 +197,34 @@ function computeLiveBalances(m){
   return { encours, previsionnel };
 }
 
+// Association compte d'épargne (champ "Compte / moyen de paiement") -> clé du solde correspondant.
+const LIVRET_ACCOUNT_FIELD = {
+  'Epargne Livret A': 'livretA',
+  'Epargne Livret Léandre': 'livretA_leandre',
+  'Epargne LDDS': 'livretDDS',
+  'Epargne Joint': 'livretJoint'
+};
+// Comme "En cours" pour le compte courant, le solde affiché d'un livret = solde de début de mois
+// + mouvements déjà "Traité" qui lui sont rattachés. Une ligne "Dépense" (montant positif) est un
+// versement qui alimente le livret ; une "Recette"/régularisation (montant négatif) est un retrait
+// vers le compte courant. Les lignes non traitées n'affectent pas encore le solde affiché.
+// null/undefined = ce profil ne possède pas ce livret : on le laisse tel quel (affiché "—"),
+// sans le confondre avec un livret existant à 0€.
+function computeLiveLivretBalances(m){
+  const s = m.summary || {};
+  const bases = {};
+  for(const field of Object.values(LIVRET_ACCOUNT_FIELD)){
+    bases[field] = (s[field]===null || s[field]===undefined) ? null : s[field];
+  }
+  (m.items||[]).forEach(it=>{
+    const field = LIVRET_ACCOUNT_FIELD[it.categorie];
+    if(!field || !it.traite || it.montant===null || it.montant===undefined) return;
+    if(bases[field]===null) return;
+    bases[field] += it.montant;
+  });
+  return bases;
+}
+
 // ===================== RENDER: DASHBOARD =====================
 function renderDashboard(){
   const m = getMonth(currentKey);
@@ -205,6 +233,7 @@ function renderDashboard(){
   const s = m.summary;
   const stats = computeMonthStats(m);
   const live = computeLiveBalances(m);
+  const liveLivrets = computeLiveLivretBalances(m);
   const soldeColor = (v)=> v===null||v===undefined ? '' : (v>=0?'pos':'neg');
 
   const upcoming = m.items.filter(it=>!it.traite && it.montant).sort((a,b)=> (a.echeance||'9999').localeCompare(b.echeance||'9999')).slice(0,6);
@@ -220,10 +249,10 @@ function renderDashboard(){
 
     <div class="section-title">Épargne <span class="hint">Livrets à date</span></div>
     <div class="grid">
-      <div class="card"><div class="eyebrow">Livret A</div><div class="value">${fmt(s.livretA)}</div></div>
-      <div class="card accent"><div class="eyebrow">Livret A · Léandre</div><div class="value">${fmt(s.livretA_leandre)}</div><div class="sub">Épargne de votre fils</div></div>
-      <div class="card"><div class="eyebrow">LDDS</div><div class="value">${fmt(s.livretDDS)}</div></div>
-      <div class="card"><div class="eyebrow">Livret Joint</div><div class="value">${fmt(s.livretJoint)}</div></div>
+      <div class="card"><div class="eyebrow">Livret A</div><div class="value">${fmt(liveLivrets.livretA)}</div></div>
+      <div class="card accent"><div class="eyebrow">Livret A · Léandre</div><div class="value">${fmt(liveLivrets.livretA_leandre)}</div><div class="sub">Épargne de votre fils</div></div>
+      <div class="card"><div class="eyebrow">LDDS</div><div class="value">${fmt(liveLivrets.livretDDS)}</div></div>
+      <div class="card"><div class="eyebrow">Livret Joint</div><div class="value">${fmt(liveLivrets.livretJoint)}</div></div>
     </div>
 
     <div class="section-title">Ce mois-ci <span class="hint">traité vs. prévu</span></div>
@@ -309,9 +338,8 @@ function renderKpiBar(m){
   if(!bar) return;
   if(!m){ bar.innerHTML = ''; return; }
   const live = computeLiveBalances(m);
-  const s = m.summary || {};
   const cls = v => v===null||v===undefined ? '' : (v>=0?'pos':'neg');
-  const epargne = s.livretA; // livret A principal comme indicateur d'épargne
+  const epargne = computeLiveLivretBalances(m).livretA; // livret A principal comme indicateur d'épargne
   bar.innerHTML = `
     <div class="kpi"><div class="k-label">En cours</div><div class="k-value ${cls(live.encours)}">${fmt(live.encours)}</div></div>
     <div class="kpi"><div class="k-label">Prévisionnel</div><div class="k-value ${cls(live.previsionnel)}">${fmt(live.previsionnel)}</div></div>
@@ -365,11 +393,14 @@ function createNextMonth(){
     if(!confirm(`${monthLabel(nextKey)} contient déjà ${existing.items.length} lignes. Les remplacer par les lignes récurrentes de ${monthLabel(currentKey)} ?`)) return;
   }
   const recurring = cur.items.filter(it=>it.item && it.recurrent).map(it=>({
-    item: it.item, echeance: null, categorie: it.categorie, montant: it.montant, traite:false, recurrent:true
+    item: it.item, echeance: null, categorie: it.categorie, categorieType: it.categorieType, montant: it.montant, traite:false, recurrent:true
   }));
   if(!recurring.length){ showToast("Aucune ligne récurrente à reprendre — marquez vos dépenses/recettes fixes comme récurrentes."); }
+  // Les livrets partent du solde réellement atteint ce mois-ci (départ + versements/retraits traités),
+  // pas du solde figé de début de mois — sinon toute évolution saisie dans l'app serait perdue au mois suivant.
+  const liveLivrets = computeLiveLivretBalances(cur);
   overlay[nextKey] = {
-    summary: { balance_prec: cur.summary.previsionnel ?? cur.summary.encours ?? null, revenu: cur.summary.revenu, livretA: cur.summary.livretA, livretA_leandre: cur.summary.livretA_leandre, livretDDS: cur.summary.livretDDS, livretJoint: cur.summary.livretJoint, encours: cur.summary.previsionnel ?? cur.summary.encours ?? null, previsionnel: cur.summary.previsionnel ?? null },
+    summary: { balance_prec: cur.summary.previsionnel ?? cur.summary.encours ?? null, revenu: cur.summary.revenu, livretA: liveLivrets.livretA, livretA_leandre: liveLivrets.livretA_leandre, livretDDS: liveLivrets.livretDDS, livretJoint: liveLivrets.livretJoint, encours: cur.summary.previsionnel ?? cur.summary.encours ?? null, previsionnel: cur.summary.previsionnel ?? null },
     items: recurring
   };
   saveOverlay(overlay);
@@ -419,8 +450,18 @@ function openItemModal(id){
     document.getElementById('f_recurrent').checked = false;
   }
   categoryTypeTouched = false;
+  updateSensLabels();
   bg.classList.add('show');
 }
+// Sur un compte d'épargne, "Dépense"/"Recette" est trompeur (verser sur son Livret A n'est pas
+// vécu comme une "dépense") : on reformule selon le sens réel de l'argent pour ce compte-là.
+function updateSensLabels(){
+  const isEpargne = /^epargne/i.test(document.getElementById('f_categorie').value);
+  const sensSel = document.getElementById('f_sens');
+  sensSel.options[0].text = isEpargne ? "Versement vers l'épargne" : 'Dépense';
+  sensSel.options[1].text = isEpargne ? 'Retrait vers le compte courant' : 'Recette';
+}
+document.getElementById('f_categorie').addEventListener('change', updateSensLabels);
 // Pour une nouvelle ligne (tant que l'utilisateur n'a pas choisi la catégorie lui-même),
 // on la déduit automatiquement du libellé au fil de la saisie.
 let categoryTypeTouched = false;
@@ -531,21 +572,23 @@ function last12KeysEndingAt(key){
 function renderEpargne(){
   const el = document.getElementById('view-epargne');
   const range = last12KeysEndingAt(currentKey);
+  const m = getMonth(currentKey);
+  const liveLivrets = m ? computeLiveLivretBalances(m) : {};
   el.innerHTML = `
     <div class="section-title">Évolution de l'épargne <span class="hint">Livret A</span></div>
     <div class="panel"><canvas id="chartLivretA" width="900" height="220"></canvas></div>
     <div class="section-title">Évolution de l'épargne <span class="hint">Livret A · Léandre</span></div>
     <div class="panel"><canvas id="chartLivretALeandre" width="900" height="220"></canvas></div>
     <div class="grid" style="margin-top:16px;">
-      <div class="card"><div class="eyebrow">Livret A</div><div class="value">${fmt(getMonth(currentKey)?.summary.livretA)}</div></div>
-      <div class="card"><div class="eyebrow">Livret A Léandre</div><div class="value">${fmt(getMonth(currentKey)?.summary.livretA_leandre)}</div></div>
-      <div class="card"><div class="eyebrow">LDDS</div><div class="value">${fmt(getMonth(currentKey)?.summary.livretDDS)}</div></div>
-      <div class="card"><div class="eyebrow">Livret Joint</div><div class="value">${fmt(getMonth(currentKey)?.summary.livretJoint)}</div></div>
+      <div class="card"><div class="eyebrow">Livret A</div><div class="value">${fmt(liveLivrets.livretA)}</div></div>
+      <div class="card"><div class="eyebrow">Livret A Léandre</div><div class="value">${fmt(liveLivrets.livretA_leandre)}</div></div>
+      <div class="card"><div class="eyebrow">LDDS</div><div class="value">${fmt(liveLivrets.livretDDS)}</div></div>
+      <div class="card"><div class="eyebrow">Livret Joint</div><div class="value">${fmt(liveLivrets.livretJoint)}</div></div>
     </div>
   `;
   const monthsData = range.map(k=>({key:k, m:getMonth(k)})).filter(x=>x.m);
-  safeDraw(()=>drawLine('chartLivretA', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:x.m.summary.livretA}))));
-  safeDraw(()=>drawLine('chartLivretALeandre', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:x.m.summary.livretA_leandre}))));
+  safeDraw(()=>drawLine('chartLivretA', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveLivretBalances(x.m).livretA}))));
+  safeDraw(()=>drawLine('chartLivretALeandre', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveLivretBalances(x.m).livretA_leandre}))));
 }
 
 // ===================== CANVAS CHARTS (no dependencies) =====================
@@ -796,7 +839,12 @@ const MSAL_CONFIG = {
   cache: { cacheLocation: "localStorage" }
 };
 const SYNC_SCOPES = ["Files.ReadWrite.AppFolder", "User.Read"];
-const REMOTE_FILE = "budget_overlay.json";
+// L'AppFolder OneDrive est partagée par (inscription Entra + compte Microsoft connecté), pas par
+// site : Alex et Charlotte utilisent la même inscription Entra (cf. CLAUDE.md), donc s'ils se
+// connectent avec le même compte Microsoft, un nom de fichier identique écraserait l'un avec les
+// données de l'autre à chaque synchronisation. Le nom du fichier distant est donc dédié à chaque profil.
+const PROFILE_NAME = document.body.dataset.profile || 'default';
+const REMOTE_FILE = `budget_overlay_${PROFILE_NAME}.json`;
 const OV_META_KEY = "budgetAlex_overlay_meta_v1";
 
 let msalInstance = null;
