@@ -295,13 +295,19 @@ function renderDashboard(){
 
 // ===================== RENDER: TRANSACTIONS =====================
 let txFilter = { text:'', cat:'all', status:'all', rec:'all' };
+let bulkEditMode = false;
+let bulkDraft = [];
 function renderTransactions(){
   const el = document.getElementById('view-transactions');
   const m = getMonth(currentKey);
+  if(bulkEditMode){ renderBulkEdit(el, m); return; }
   el.innerHTML = `
     <div class="kpi-bar" id="kpiBar"></div>
     <div class="section-title">Suivi du budget — ${monthLabel(currentKey)}
-      <span class="hint"><button class="btn ghost small" id="btnNewMonth">Créer le mois suivant à partir de celui-ci</button></span>
+      <span class="hint" style="display:inline-flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn ghost small" id="btnBulkEdit">Modifier en masse</button>
+        <button class="btn ghost small" id="btnNewMonth">Créer le mois suivant à partir de celui-ci</button>
+      </span>
     </div>
     <div class="filter-bar">
       <button class="scroll-jump-inline" id="scrollDownBtnMobile" title="Aller en bas du tableau" aria-label="Aller en bas du tableau">↓</button>
@@ -329,9 +335,103 @@ function renderTransactions(){
   document.getElementById('txStatusFilter').addEventListener('change', e=>{ txFilter.status = e.target.value; renderTxRows(getMonth(currentKey)); });
   document.getElementById('txRecFilter').addEventListener('change', e=>{ txFilter.rec = e.target.value; renderTxRows(getMonth(currentKey)); });
   document.getElementById('btnNewMonth').addEventListener('click', createNextMonth);
+  document.getElementById('btnBulkEdit').addEventListener('click', enterBulkEditMode);
   document.getElementById('scrollDownBtnMobile').addEventListener('click', scrollToTableBottom);
   renderKpiBar(m);
   renderTxRows(m);
+}
+
+// ===================== MODIFICATION EN MASSE =====================
+// Édition directe et groupée des lignes du mois affiché : plus rapide que la modale
+// ligne par ligne quand il y a beaucoup de créations/corrections à faire d'un coup.
+function enterBulkEditMode(){
+  const m = getMonth(currentKey);
+  if(!m){ showToast('Mois vide.'); return; }
+  bulkDraft = m.items.map(it=>({...it}));
+  bulkEditMode = true;
+  renderTransactions();
+}
+function exitBulkEditMode(){
+  bulkEditMode = false;
+  bulkDraft = [];
+  renderTransactions();
+}
+function saveBulkEdit(){
+  // Les lignes laissées entièrement vides (ni libellé ni montant) sont retirées automatiquement.
+  const cleaned = bulkDraft.filter(it => (it.item && it.item.trim()) || (it.montant!==null && it.montant!==undefined));
+  setMonthItems(currentKey, cleaned);
+  bulkEditMode = false;
+  bulkDraft = [];
+  refreshAll();
+  showToast(`${cleaned.length} ligne(s) enregistrée(s).`);
+}
+function renderBulkEdit(el, m){
+  el.innerHTML = `
+    <div class="kpi-bar" id="kpiBar"></div>
+    <div class="section-title">Modifier en masse — ${monthLabel(currentKey)}
+      <span class="hint" style="display:inline-flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn ghost small" id="btnCancelBulk">Annuler</button>
+        <button class="btn small" id="btnSaveBulk">Enregistrer</button>
+      </span>
+    </div>
+    <div class="bulk-hint">Montant positif = dépense (ou versement si compte d'épargne) · négatif = recette/crédit (ou retrait vers le compte courant si compte d'épargne).</div>
+    <div class="panel" style="padding:0;">
+      <table class="tx edit-mode" id="txTableEdit"><thead><tr>
+        <th style="width:34px;"></th><th>Libellé</th><th>Catégorie</th><th>Compte</th><th style="text-align:right;width:120px;">Montant</th><th style="width:34px;"></th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <button class="btn ghost small" id="btnAddBulkRow" style="margin-top:12px;">+ Ajouter une ligne</button>
+  `;
+  renderBulkRows();
+  renderKpiBar({ summary: m.summary, items: bulkDraft });
+  document.getElementById('btnCancelBulk').addEventListener('click', exitBulkEditMode);
+  document.getElementById('btnSaveBulk').addEventListener('click', saveBulkEdit);
+  document.getElementById('btnAddBulkRow').addEventListener('click', ()=>{
+    bulkDraft.push({item:'', echeance:null, categorie:'LCL', categorieType:'Autre', montant:null, traite:true, recurrent:false});
+    renderBulkRows();
+    scrollToTableBottom();
+  });
+}
+function renderBulkRows(){
+  const tbody = document.querySelector('#txTableEdit tbody');
+  const m = getMonth(currentKey);
+  if(!bulkDraft.length){ tbody.innerHTML = `<tr><td colspan="6" class="empty">Aucune ligne — utilisez « + Ajouter une ligne ».</td></tr>`; return; }
+  tbody.innerHTML = bulkDraft.map((it, i)=>`
+    <tr>
+      <td><button class="chk ${it.traite?'done':''}" data-toggle-bidx="${i}" title="Traité">${it.traite?'✓':''}</button></td>
+      <td><input type="text" data-field="item" data-bidx="${i}" value="${esc(it.item||'')}" placeholder="Libellé"></td>
+      <td><select data-field="categorieType" data-bidx="${i}">${CATEGORY_TYPES.map(c=>`<option value="${c}" ${getCategoryType(it)===c?'selected':''}>${c}</option>`).join('')}</select></td>
+      <td><select data-field="categorie" data-bidx="${i}">${CATEGORIES_COMPTE.map(c=>`<option value="${c}" ${it.categorie===c?'selected':''}>${c}</option>`).join('')}</select></td>
+      <td><input type="number" step="0.01" data-field="montant" data-bidx="${i}" value="${it.montant??''}" style="text-align:right;" placeholder="0.00"></td>
+      <td><button class="icon-btn danger" data-del-bidx="${i}" title="Supprimer la ligne">✕</button></td>
+    </tr>
+  `).join('');
+  tbody.querySelectorAll('[data-toggle-bidx]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const idx = +b.dataset.toggleBidx;
+      bulkDraft[idx].traite = !bulkDraft[idx].traite;
+      renderBulkRows();
+      renderKpiBar({ summary: m.summary, items: bulkDraft });
+    });
+  });
+  tbody.querySelectorAll('[data-field]').forEach(elm=>{
+    const idx = +elm.dataset.bidx;
+    const field = elm.dataset.field;
+    const evt = elm.tagName==='SELECT' ? 'change' : 'input';
+    elm.addEventListener(evt, e=>{
+      let v = e.target.value;
+      if(field==='montant') v = v===''? null : parseFloat(v);
+      bulkDraft[idx][field] = v;
+      renderKpiBar({ summary: m.summary, items: bulkDraft });
+    });
+  });
+  tbody.querySelectorAll('[data-del-bidx]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      bulkDraft.splice(+b.dataset.delBidx, 1);
+      renderBulkRows();
+      renderKpiBar({ summary: m.summary, items: bulkDraft });
+    });
+  });
 }
 function renderKpiBar(m){
   const bar = document.getElementById('kpiBar');

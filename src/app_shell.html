@@ -146,6 +146,18 @@
     background:none;border:none;color:var(--muted-2);cursor:pointer;font-size:14px;padding:2px 5px;
   }
   .icon-btn:hover{color:var(--teal-bright);}
+  .icon-btn.danger:hover{color:var(--neg);}
+
+  /* ---------- modification en masse : tableau éditable en ligne ---------- */
+  .bulk-hint{font-size:11.5px;color:var(--muted);margin:-4px 0 10px;}
+  table.tx.edit-mode td{padding:6px 6px;}
+  table.tx.edit-mode input[type=text], table.tx.edit-mode input[type=number], table.tx.edit-mode select{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    border-radius:7px;padding:6px 8px;font-size:13px;font-family:var(--sans);
+  }
+  table.tx.edit-mode input[type=number]{font-family:var(--mono);}
+  table.tx.edit-mode input:focus, table.tx.edit-mode select:focus{outline:none;border-color:var(--teal);}
+  table.tx.edit-mode select{color-scheme:light dark;}
 
   /* Variante inline de la flèche bas, insérée dans la barre de filtres — seulement utilisée sur petit écran (voir media query plus bas) */
   .scroll-jump-inline{display:none;}
@@ -171,6 +183,19 @@
     table.tx td:nth-child(3){order:6;margin-left:auto;margin-top:3px;} /* catégorie, à droite */
     table.tx td:nth-child(4){order:7;margin-top:3px;}              /* compte */
     table.tx td:nth-child(3) .tag, table.tx td:nth-child(4) .tag{font-size:9.5px;padding:1px 6px;}
+
+    /* Modification en masse : mise en page dédiée (les champs de saisie pleine largeur cassent
+       la logique de réordonnancement ci-dessus, pensée pour du texte/des tags en lecture seule). */
+    table.tx.edit-mode tr{align-items:flex-start;row-gap:6px;}
+    table.tx.edit-mode td{padding:0;}
+    table.tx.edit-mode td:nth-child(1){order:1;padding-top:6px;}
+    table.tx.edit-mode td:nth-child(2){order:2;flex:1;min-width:0;font-size:13.5px;font-weight:500;white-space:normal;}
+    table.tx.edit-mode td:nth-child(6){order:3;padding-top:4px;}
+    table.tx.edit-mode tr::after{order:4;}
+    table.tx.edit-mode td:nth-child(3){order:5;flex:1 1 46%;margin:0;}
+    table.tx.edit-mode td:nth-child(4){order:6;flex:1 1 46%;margin:0;}
+    table.tx.edit-mode td:nth-child(5){order:7;flex:1 1 100%;margin:0;}
+    table.tx.edit-mode select{font-size:12.5px;}
 
     /* Sur petit écran, la flèche bas flottante gêne le tableau : on la remplace par une version
        inline à gauche du champ de recherche (voir .scroll-jump-inline dans la filter-bar). */
