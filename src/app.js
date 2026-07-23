@@ -102,6 +102,7 @@ function setMonthItems(key, items){
   if(!overlay[key]) overlay[key] = {};
   overlay[key].items = items.map(({_id, ...rest})=>rest);
   saveOverlay(overlay);
+  _liveBalanceCache = null; // les lignes changent : la chaîne des balances en cascade doit se recalculer
 }
 function allMonthKeys(){
   const keys = new Set([...Object.keys(SEED), ...Object.keys(overlay)]);
@@ -188,13 +189,35 @@ function computeMonthStats(m){
 // ne rajoute PAS le champ "revenu" séparément — ce serait un double comptage.
 // - En cours    = balance début de mois + (recettes+régul traitées) - (dépenses traitées)
 // - Prévisionnel = En cours + tout ce qui reste "à venir" (non traité)
-function computeLiveBalances(m){
-  const s = m.summary || {};
-  const st = computeMonthStats(m);
-  const base = (s.balance_prec ?? 0);
+function computeLiveBalancesFromItems(items, base){
+  const st = computeMonthStats({items});
   const encours = base + st.realRec + st.realTransferIn - st.realDep;
   const previsionnel = encours + st.prevRec + st.prevTransferIn - st.prevDep;
-  return { encours, previsionnel };
+  return { balancePrec: base, encours, previsionnel };
+}
+// Balance de départ d'un mois : priorité au balance_prec stocké sur CE mois (mois historique
+// importé de l'Excel, ou mois déjà résolu manuellement via "Resynchroniser" — cf. resyncBalancePrec) ;
+// ce n'est QUE si ce mois n'a aucun balance_prec stocké (un mois créé via "Créer le mois suivant"
+// depuis ce correctif) qu'on retombe sur le Prévisionnel en direct du mois précédent. On ne
+// recalcule donc jamais l'historique importé depuis ses lignes (elles ne sont pas forcément
+// exhaustives), seulement les mois créés par l'appli à partir de maintenant.
+function resolveBalancePrecFor(key){
+  const m = getMonth(key);
+  if(!m) return 0;
+  const storedBase = m.summary ? m.summary.balance_prec : null;
+  if(storedBase!==undefined && storedBase!==null) return storedBase;
+  const prevKey = shiftKey(key, -1);
+  const prevMonth = getMonth(prevKey);
+  return prevMonth ? computeLiveBalances(prevKey).previsionnel : 0;
+}
+let _liveBalanceCache = null; // remis à zéro à chaque refreshAll()/setMonthItems() ; évite de remonter toute la chaîne à chaque appel
+function computeLiveBalances(key){
+  if(_liveBalanceCache && _liveBalanceCache.has(key)) return _liveBalanceCache.get(key);
+  const m = getMonth(key);
+  if(!m) return { balancePrec:null, encours:null, previsionnel:null };
+  const result = computeLiveBalancesFromItems(m.items, resolveBalancePrecFor(key));
+  if(_liveBalanceCache) _liveBalanceCache.set(key, result);
+  return result;
 }
 
 // Association compte d'épargne (champ "Compte / moyen de paiement") -> clé du solde correspondant.
@@ -232,7 +255,7 @@ function renderDashboard(){
   if(!m){ el.innerHTML = '<div class="empty">Aucune donnée pour ce mois. Utilisez « Nouveau mois » depuis l\'onglet Suivi.</div>'; return; }
   const s = m.summary;
   const stats = computeMonthStats(m);
-  const live = computeLiveBalances(m);
+  const live = computeLiveBalances(currentKey);
   const liveLivrets = computeLiveLivretBalances(m);
   const soldeColor = (v)=> v===null||v===undefined ? '' : (v>=0?'pos':'neg');
 
@@ -241,7 +264,7 @@ function renderDashboard(){
   const th = chartColors();
   el.innerHTML = `
     <div class="grid">
-      <div class="card"><div class="eyebrow">Balance mois précédent</div><div class="value ${soldeColor(s.balance_prec)}">${fmt(s.balance_prec)}</div></div>
+      <div class="card"><div class="eyebrow">Balance mois précédent</div><div class="value ${soldeColor(live.balancePrec)}">${fmt(live.balancePrec)}</div></div>
       <div class="card accent"><div class="eyebrow">Revenu mensuel</div><div class="value pos">${fmt(s.revenu)}</div></div>
       <div class="card"><div class="eyebrow">En cours (compte courant)</div><div class="value ${soldeColor(live.encours)}">${fmt(live.encours)}</div></div>
       <div class="card"><div class="eyebrow">Prévisionnel fin de mois</div><div class="value ${soldeColor(live.previsionnel)}">${fmt(live.previsionnel)}</div></div>
@@ -301,12 +324,20 @@ function renderTransactions(){
   const el = document.getElementById('view-transactions');
   const m = getMonth(currentKey);
   if(bulkEditMode){ renderBulkEdit(el, m); return; }
+  // Un mois dont la balance de départ a été figée (avant ce correctif, ou historique importé)
+  // ne suit plus automatiquement le Prévisionnel du mois précédent si celui-ci est modifié
+  // après coup. Ce bouton permet de "décoller" ponctuellement ce mois pour qu'il redevienne
+  // lié en direct, sans toucher à ses lignes.
+  const prevKeyForResync = shiftKey(currentKey, -1);
+  const hasOwnAnchor = m && m.summary && m.summary.balance_prec!==undefined && m.summary.balance_prec!==null;
+  const showResync = hasOwnAnchor && !!getMonth(prevKeyForResync);
   el.innerHTML = `
     <div class="kpi-bar" id="kpiBar"></div>
     <div class="section-title">Suivi du budget — ${monthLabel(currentKey)}
       <span class="hint" style="display:inline-flex;gap:8px;flex-wrap:wrap;">
         <button class="btn ghost small" id="btnBulkEdit">Modifier en masse</button>
         <button class="btn ghost small" id="btnNewMonth">Créer le mois suivant à partir de celui-ci</button>
+        ${showResync ? `<button class="btn ghost small" id="btnResyncBalance" title="Recalcule la balance de départ de ce mois à partir du Prévisionnel en direct de ${monthLabel(prevKeyForResync)}, sans toucher aux lignes de ce mois.">Resynchroniser la balance de départ</button>` : ''}
       </span>
     </div>
     <div class="filter-bar">
@@ -336,9 +367,26 @@ function renderTransactions(){
   document.getElementById('txRecFilter').addEventListener('change', e=>{ txFilter.rec = e.target.value; renderTxRows(getMonth(currentKey)); });
   document.getElementById('btnNewMonth').addEventListener('click', createNextMonth);
   document.getElementById('btnBulkEdit').addEventListener('click', enterBulkEditMode);
+  const resyncBtn = document.getElementById('btnResyncBalance');
+  if(resyncBtn) resyncBtn.addEventListener('click', resyncBalancePrec);
   document.getElementById('scrollDownBtnMobile').addEventListener('click', scrollToTableBottom);
   renderKpiBar(m);
   renderTxRows(m);
+}
+// Détache la balance de départ du mois affiché de son ancre figée (SEED ou overlay), pour
+// qu'elle redevienne dérivée en direct du Prévisionnel du mois précédent — sans toucher aux
+// lignes du mois. Utile pour un mois créé avant ce correctif (encore figé), ou pour rattraper
+// un mois dont le mois précédent a été retouché après coup.
+function resyncBalancePrec(){
+  const prevKey = shiftKey(currentKey, -1);
+  if(!getMonth(prevKey)){ showToast('Aucun mois précédent disponible.'); return; }
+  const currentSummary = getMonth(currentKey)?.summary || {};
+  if(!overlay[currentKey]) overlay[currentKey] = {};
+  overlay[currentKey].summary = { ...currentSummary, balance_prec: null };
+  saveOverlay(overlay);
+  _liveBalanceCache = null;
+  refreshAll();
+  showToast('Balance de départ resynchronisée depuis ' + monthLabel(prevKey) + '.');
 }
 
 // ===================== MODIFICATION EN MASSE =====================
@@ -437,7 +485,10 @@ function renderKpiBar(m){
   const bar = document.getElementById('kpiBar');
   if(!bar) return;
   if(!m){ bar.innerHTML = ''; return; }
-  const live = computeLiveBalances(m);
+  // m peut être le mois réellement stocké (currentKey) ou un brouillon d'édition en masse non
+  // encore enregistré (mêmes lignes en mémoire) : dans les deux cas la balance de départ à
+  // utiliser est celle du mois affiché, currentKey — jamais celle d'un mois arbitraire.
+  const live = computeLiveBalancesFromItems(m.items, resolveBalancePrecFor(currentKey));
   const cls = v => v===null||v===undefined ? '' : (v>=0?'pos':'neg');
   const epargne = computeLiveLivretBalances(m).livretA; // livret A principal comme indicateur d'épargne
   bar.innerHTML = `
@@ -499,8 +550,13 @@ function createNextMonth(){
   // Les livrets partent du solde réellement atteint ce mois-ci (départ + versements/retraits traités),
   // pas du solde figé de début de mois — sinon toute évolution saisie dans l'app serait perdue au mois suivant.
   const liveLivrets = computeLiveLivretBalances(cur);
+  // balance_prec est explicitement forcé à null (et pas simplement omis) pour effacer une
+  // éventuelle ancre déjà présente dans le SEED pour ce mois (ex : mois pré-rempli depuis
+  // l'Excel) — sinon la fusion SEED+overlay la ferait réapparaître telle quelle.
+  // computeLiveBalances() déduit alors toujours la balance de départ en direct du Prévisionnel
+  // du mois précédent (voir resolveBalancePrecFor plus haut).
   overlay[nextKey] = {
-    summary: { balance_prec: cur.summary.previsionnel ?? cur.summary.encours ?? null, revenu: cur.summary.revenu, livretA: liveLivrets.livretA, livretA_leandre: liveLivrets.livretA_leandre, livretDDS: liveLivrets.livretDDS, livretJoint: liveLivrets.livretJoint, encours: cur.summary.previsionnel ?? cur.summary.encours ?? null, previsionnel: cur.summary.previsionnel ?? null },
+    summary: { balance_prec: null, revenu: cur.summary.revenu, livretA: liveLivrets.livretA, livretA_leandre: liveLivrets.livretA_leandre, livretDDS: liveLivrets.livretDDS, livretJoint: liveLivrets.livretJoint },
     items: recurring
   };
   saveOverlay(overlay);
@@ -650,7 +706,7 @@ function renderAnalyses(){
     </div>` : `<div class="panel"><div class="empty">Disponible à partir d'août 2026 (avant cette date, les dépenses n'étaient pas catégorisées).</div></div>`}
   `;
   const monthsData = range.map(k=>({key:k, m:getMonth(k)})).filter(x=>x.m);
-  safeDraw(()=>drawLine('chartBalance', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:x.m.summary.encours}))));
+  safeDraw(()=>drawLine('chartBalance', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveBalances(x.key).encours}))));
   safeDraw(()=>drawGroupedBars('chartIncomeExpense', monthsData.map(x=>{
     const s = computeMonthStats(x.m);
     return {label:monthLabel(x.key).split(' ')[0].slice(0,3), a:s.realRec, b:s.realDep};
@@ -838,6 +894,7 @@ function updateHeaderHeight(){
   if(header) document.documentElement.style.setProperty('--header-h', header.offsetHeight+'px');
 }
 function refreshAll(){
+  _liveBalanceCache = new Map();
   document.getElementById('monthLabel').textContent = monthLabel(currentKey);
   const jump = document.getElementById('monthJump');
   const prevVal = jump.value;
