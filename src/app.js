@@ -102,9 +102,13 @@ function setMonthItems(key, items){
   if(!overlay[key]) overlay[key] = {};
   overlay[key].items = items.map(({_id, ...rest})=>rest);
   saveOverlay(overlay);
-  // les lignes changent : les chaînes de balances en cascade (compte courant + livrets) doivent se recalculer
-  _liveBalanceCache = null;
-  _liveLivretCache = null;
+  // les lignes changent : les chaînes de balances en cascade (compte courant + livrets) doivent se
+  // recalculer — on réinitialise en Map() vide plutôt qu'en null : la mémoïsation est indispensable
+  // ici (pas juste une optimisation), sinon la résolution récursive d'un solde de départ absent sur
+  // plusieurs mois d'affilée (ex. plusieurs livrets jamais renseignés sur de nombreux mois anciens)
+  // explose de façon exponentielle sans elle.
+  _liveBalanceCache = new Map();
+  _liveLivretCache = new Map();
 }
 function allMonthKeys(){
   const keys = new Set([...Object.keys(SEED), ...Object.keys(overlay)]);
@@ -408,8 +412,8 @@ function resyncStartingBalances(){
   if(!overlay[currentKey]) overlay[currentKey] = {};
   overlay[currentKey].summary = { ...currentSummary, balance_prec: null, livretA: null, livretA_leandre: null, livretDDS: null, livretJoint: null };
   saveOverlay(overlay);
-  _liveBalanceCache = null;
-  _liveLivretCache = null;
+  _liveBalanceCache = new Map();
+  _liveLivretCache = new Map();
   refreshAll();
   showToast('Soldes de départ resynchronisés depuis ' + monthLabel(prevKey) + '.');
 }
