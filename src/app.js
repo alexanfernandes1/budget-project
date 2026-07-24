@@ -102,7 +102,9 @@ function setMonthItems(key, items){
   if(!overlay[key]) overlay[key] = {};
   overlay[key].items = items.map(({_id, ...rest})=>rest);
   saveOverlay(overlay);
-  _liveBalanceCache = null; // les lignes changent : la chaîne des balances en cascade doit se recalculer
+  // les lignes changent : les chaînes de balances en cascade (compte courant + livrets) doivent se recalculer
+  _liveBalanceCache = null;
+  _liveLivretCache = null;
 }
 function allMonthKeys(){
   const keys = new Set([...Object.keys(SEED), ...Object.keys(overlay)]);
@@ -233,19 +235,40 @@ const LIVRET_ACCOUNT_FIELD = {
 // vers le compte courant. Les lignes non traitées n'affectent pas encore le solde affiché.
 // null/undefined = ce profil ne possède pas ce livret : on le laisse tel quel (affiché "—"),
 // sans le confondre avec un livret existant à 0€.
-function computeLiveLivretBalances(m){
-  const s = m.summary || {};
-  const bases = {};
-  for(const field of Object.values(LIVRET_ACCOUNT_FIELD)){
-    bases[field] = (s[field]===null || s[field]===undefined) ? null : s[field];
-  }
-  (m.items||[]).forEach(it=>{
+function computeLiveLivretBalancesFromItems(items, bases){
+  const result = {...bases};
+  (items||[]).forEach(it=>{
     const field = LIVRET_ACCOUNT_FIELD[it.categorie];
     if(!field || !it.traite || it.montant===null || it.montant===undefined) return;
-    if(bases[field]===null) return;
-    bases[field] += it.montant;
+    if(result[field]===null) return;
+    result[field] += it.montant;
   });
+  return result;
+}
+// Même logique que resolveBalancePrecFor : priorité au solde stocké sur CE mois pour ce livret ;
+// s'il est absent (mois créé via l'appli depuis ce correctif), on retombe sur le solde de fin de
+// mois précédent, en cascade. null/undefined qui remonte jusqu'au tout premier mois = ce profil
+// ne possède simplement pas ce livret (jamais confondu avec un livret existant à 0€).
+function resolveLivretBasesFor(key){
+  const m = getMonth(key);
+  const bases = {};
+  for(const field of Object.values(LIVRET_ACCOUNT_FIELD)){
+    const stored = m && m.summary ? m.summary[field] : null;
+    if(stored!==undefined && stored!==null){ bases[field] = stored; continue; }
+    const prevKey = shiftKey(key, -1);
+    const prevMonth = getMonth(prevKey);
+    bases[field] = prevMonth ? computeLiveLivretBalances(prevKey)[field] : null;
+  }
   return bases;
+}
+let _liveLivretCache = null; // remis à zéro à chaque refreshAll()/setMonthItems()
+function computeLiveLivretBalances(key){
+  if(_liveLivretCache && _liveLivretCache.has(key)) return _liveLivretCache.get(key);
+  const m = getMonth(key);
+  if(!m) return { livretA:null, livretA_leandre:null, livretDDS:null, livretJoint:null };
+  const result = computeLiveLivretBalancesFromItems(m.items, resolveLivretBasesFor(key));
+  if(_liveLivretCache) _liveLivretCache.set(key, result);
+  return result;
 }
 
 // ===================== RENDER: DASHBOARD =====================
@@ -256,7 +279,7 @@ function renderDashboard(){
   const s = m.summary;
   const stats = computeMonthStats(m);
   const live = computeLiveBalances(currentKey);
-  const liveLivrets = computeLiveLivretBalances(m);
+  const liveLivrets = computeLiveLivretBalances(currentKey);
   const soldeColor = (v)=> v===null||v===undefined ? '' : (v>=0?'pos':'neg');
 
   const upcoming = m.items.filter(it=>!it.traite && it.montant).sort((a,b)=> (a.echeance||'9999').localeCompare(b.echeance||'9999')).slice(0,6);
@@ -324,12 +347,13 @@ function renderTransactions(){
   const el = document.getElementById('view-transactions');
   const m = getMonth(currentKey);
   if(bulkEditMode){ renderBulkEdit(el, m); return; }
-  // Un mois dont la balance de départ a été figée (avant ce correctif, ou historique importé)
-  // ne suit plus automatiquement le Prévisionnel du mois précédent si celui-ci est modifié
-  // après coup. Ce bouton permet de "décoller" ponctuellement ce mois pour qu'il redevienne
-  // lié en direct, sans toucher à ses lignes.
+  // Un mois dont un des soldes de départ (balance courante ou un livret) a été figé (avant ce
+  // correctif, ou historique importé) ne suit plus automatiquement les valeurs de fin de mois
+  // précédent si celui-ci est modifié après coup. Ce bouton permet de "décoller" ponctuellement
+  // ce mois pour qu'il redevienne lié en direct, sans toucher à ses lignes.
   const prevKeyForResync = shiftKey(currentKey, -1);
-  const hasOwnAnchor = m && m.summary && m.summary.balance_prec!==undefined && m.summary.balance_prec!==null;
+  const STARTING_BALANCE_FIELDS = ['balance_prec','livretA','livretA_leandre','livretDDS','livretJoint'];
+  const hasOwnAnchor = m && m.summary && STARTING_BALANCE_FIELDS.some(f => m.summary[f]!==undefined && m.summary[f]!==null);
   const showResync = hasOwnAnchor && !!getMonth(prevKeyForResync);
   el.innerHTML = `
     <div class="kpi-bar" id="kpiBar"></div>
@@ -337,7 +361,7 @@ function renderTransactions(){
       <span class="hint" style="display:inline-flex;gap:8px;flex-wrap:wrap;">
         <button class="btn ghost small" id="btnBulkEdit">Modifier en masse</button>
         <button class="btn ghost small" id="btnNewMonth">Créer le mois suivant à partir de celui-ci</button>
-        ${showResync ? `<button class="btn ghost small" id="btnResyncBalance" title="Recalcule la balance de départ de ce mois à partir du Prévisionnel en direct de ${monthLabel(prevKeyForResync)}, sans toucher aux lignes de ce mois.">Resynchroniser la balance de départ</button>` : ''}
+        ${showResync ? `<button class="btn ghost small" id="btnResyncBalance" title="Recalcule la balance courante et les soldes de livret de ce mois à partir des valeurs en direct de fin ${monthLabel(prevKeyForResync)}, sans toucher aux lignes de ce mois.">Resynchroniser les soldes de départ</button>` : ''}
       </span>
     </div>
     <div class="filter-bar">
@@ -368,25 +392,26 @@ function renderTransactions(){
   document.getElementById('btnNewMonth').addEventListener('click', createNextMonth);
   document.getElementById('btnBulkEdit').addEventListener('click', enterBulkEditMode);
   const resyncBtn = document.getElementById('btnResyncBalance');
-  if(resyncBtn) resyncBtn.addEventListener('click', resyncBalancePrec);
+  if(resyncBtn) resyncBtn.addEventListener('click', resyncStartingBalances);
   document.getElementById('scrollDownBtnMobile').addEventListener('click', scrollToTableBottom);
   renderKpiBar(m);
   renderTxRows(m);
 }
-// Détache la balance de départ du mois affiché de son ancre figée (SEED ou overlay), pour
-// qu'elle redevienne dérivée en direct du Prévisionnel du mois précédent — sans toucher aux
-// lignes du mois. Utile pour un mois créé avant ce correctif (encore figé), ou pour rattraper
-// un mois dont le mois précédent a été retouché après coup.
-function resyncBalancePrec(){
+// Détache les soldes de départ du mois affiché (balance courante + les 4 livrets) de leur
+// ancre figée (SEED ou overlay), pour qu'ils redeviennent dérivés en direct des valeurs de fin
+// du mois précédent — sans jamais toucher aux lignes du mois. Utile pour un mois créé avant ce
+// correctif (encore figé), ou pour rattraper un mois dont le mois précédent a été retouché après coup.
+function resyncStartingBalances(){
   const prevKey = shiftKey(currentKey, -1);
   if(!getMonth(prevKey)){ showToast('Aucun mois précédent disponible.'); return; }
   const currentSummary = getMonth(currentKey)?.summary || {};
   if(!overlay[currentKey]) overlay[currentKey] = {};
-  overlay[currentKey].summary = { ...currentSummary, balance_prec: null };
+  overlay[currentKey].summary = { ...currentSummary, balance_prec: null, livretA: null, livretA_leandre: null, livretDDS: null, livretJoint: null };
   saveOverlay(overlay);
   _liveBalanceCache = null;
+  _liveLivretCache = null;
   refreshAll();
-  showToast('Balance de départ resynchronisée depuis ' + monthLabel(prevKey) + '.');
+  showToast('Soldes de départ resynchronisés depuis ' + monthLabel(prevKey) + '.');
 }
 
 // ===================== MODIFICATION EN MASSE =====================
@@ -490,7 +515,7 @@ function renderKpiBar(m){
   // utiliser est celle du mois affiché, currentKey — jamais celle d'un mois arbitraire.
   const live = computeLiveBalancesFromItems(m.items, resolveBalancePrecFor(currentKey));
   const cls = v => v===null||v===undefined ? '' : (v>=0?'pos':'neg');
-  const epargne = computeLiveLivretBalances(m).livretA; // livret A principal comme indicateur d'épargne
+  const epargne = computeLiveLivretBalancesFromItems(m.items, resolveLivretBasesFor(currentKey)).livretA; // livret A principal comme indicateur d'épargne
   bar.innerHTML = `
     <div class="kpi"><div class="k-label">En cours</div><div class="k-value ${cls(live.encours)}">${fmt(live.encours)}</div></div>
     <div class="kpi"><div class="k-label">Prévisionnel</div><div class="k-value ${cls(live.previsionnel)}">${fmt(live.previsionnel)}</div></div>
@@ -547,16 +572,15 @@ function createNextMonth(){
     item: it.item, echeance: null, categorie: it.categorie, categorieType: it.categorieType, montant: it.montant, traite:false, recurrent:true
   }));
   if(!recurring.length){ showToast("Aucune ligne récurrente à reprendre — marquez vos dépenses/recettes fixes comme récurrentes."); }
-  // Les livrets partent du solde réellement atteint ce mois-ci (départ + versements/retraits traités),
-  // pas du solde figé de début de mois — sinon toute évolution saisie dans l'app serait perdue au mois suivant.
-  const liveLivrets = computeLiveLivretBalances(cur);
-  // balance_prec est explicitement forcé à null (et pas simplement omis) pour effacer une
-  // éventuelle ancre déjà présente dans le SEED pour ce mois (ex : mois pré-rempli depuis
-  // l'Excel) — sinon la fusion SEED+overlay la ferait réapparaître telle quelle.
-  // computeLiveBalances() déduit alors toujours la balance de départ en direct du Prévisionnel
-  // du mois précédent (voir resolveBalancePrecFor plus haut).
+  // balance_prec et les 4 soldes de livret sont explicitement forcés à null (et pas simplement
+  // omis) pour effacer une éventuelle ancre déjà présente dans le SEED pour ce mois (ex : mois
+  // pré-rempli depuis l'Excel) — sinon la fusion SEED+overlay la ferait réapparaître telle quelle.
+  // computeLiveBalances()/computeLiveLivretBalances() déduisent alors toujours ces soldes de
+  // départ en direct des valeurs de fin de mois précédent (voir resolveBalancePrecFor/
+  // resolveLivretBasesFor plus haut) : plus jamais figés, ils suivent les mois précédents même
+  // modifiés après coup.
   overlay[nextKey] = {
-    summary: { balance_prec: null, revenu: cur.summary.revenu, livretA: liveLivrets.livretA, livretA_leandre: liveLivrets.livretA_leandre, livretDDS: liveLivrets.livretDDS, livretJoint: liveLivrets.livretJoint },
+    summary: { balance_prec: null, revenu: cur.summary.revenu, livretA: null, livretA_leandre: null, livretDDS: null, livretJoint: null },
     items: recurring
   };
   saveOverlay(overlay);
@@ -729,7 +753,7 @@ function renderEpargne(){
   const el = document.getElementById('view-epargne');
   const range = last12KeysEndingAt(currentKey);
   const m = getMonth(currentKey);
-  const liveLivrets = m ? computeLiveLivretBalances(m) : {};
+  const liveLivrets = m ? computeLiveLivretBalances(currentKey) : {};
   el.innerHTML = `
     <div class="section-title">Évolution de l'épargne <span class="hint">Livret A</span></div>
     <div class="panel"><canvas id="chartLivretA" width="900" height="220"></canvas></div>
@@ -743,8 +767,8 @@ function renderEpargne(){
     </div>
   `;
   const monthsData = range.map(k=>({key:k, m:getMonth(k)})).filter(x=>x.m);
-  safeDraw(()=>drawLine('chartLivretA', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveLivretBalances(x.m).livretA}))));
-  safeDraw(()=>drawLine('chartLivretALeandre', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveLivretBalances(x.m).livretA_leandre}))));
+  safeDraw(()=>drawLine('chartLivretA', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveLivretBalances(x.key).livretA}))));
+  safeDraw(()=>drawLine('chartLivretALeandre', monthsData.map(x=>({label:monthLabel(x.key).split(' ')[0].slice(0,3), value:computeLiveLivretBalances(x.key).livretA_leandre}))));
 }
 
 // ===================== CANVAS CHARTS (no dependencies) =====================
@@ -895,6 +919,7 @@ function updateHeaderHeight(){
 }
 function refreshAll(){
   _liveBalanceCache = new Map();
+  _liveLivretCache = new Map();
   document.getElementById('monthLabel').textContent = monthLabel(currentKey);
   const jump = document.getElementById('monthJump');
   const prevVal = jump.value;
