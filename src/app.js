@@ -1189,7 +1189,11 @@ async function syncNow(){
     setSyncStatus('ok', 'Synchronisé à ' + now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}));
   }catch(e){
     console.error('sync error', e);
-    setSyncStatus('error', 'Erreur de synchronisation');
+    // Message générique volontairement enrichi du détail technique (code HTTP, erreur MSAL...) :
+    // sans ça, impossible de distinguer un problème de droits, un blocage réseau ou une panne
+    // ponctuelle côté Microsoft quand l'utilisateur nous rapporte juste "erreur de synchronisation".
+    const detail = (e && (e.errorCode || e.message)) || 'inconnue';
+    setSyncStatus('error', 'Erreur de synchronisation (' + detail + ')');
   }finally{
     syncInProgress = false;
   }
