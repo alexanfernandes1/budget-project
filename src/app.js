@@ -1139,6 +1139,18 @@ async function getGraphToken(){
   }
 }
 
+// Le dossier applicatif OneDrive ("AppFolder", adressé ici via /special/approot) doit avoir été
+// créé au moins une fois avant de pouvoir adresser un fichier à l'intérieur par chemin
+// (":/nom:/content") : tant qu'il n'existe pas encore (première synchro après une reconnexion,
+// jeton fraîchement réémis...), Graph répond 400 Bad Request au lieu de le créer à la volée. Un
+// simple GET sur /special/approot le crée s'il n'existe pas, donc on s'assure qu'il existe avant
+// toute lecture/écriture du fichier de sauvegarde.
+async function ensureAppRoot(token){
+  const res = await fetch('https://graph.microsoft.com/v1.0/me/drive/special/approot', {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  if(!res.ok) throw new Error('appfolder init failed: ' + res.status);
+}
 async function downloadRemoteOverlay(token){
   const res = await fetch(`https://graph.microsoft.com/v1.0/me/drive/special/approot:/${REMOTE_FILE}:/content`, {
     headers: { Authorization: 'Bearer ' + token }
@@ -1171,6 +1183,7 @@ async function syncNow(){
   try{
     const token = await getGraphToken();
     if(!token){ syncInProgress = false; return; } // redirect in progress
+    await ensureAppRoot(token);
     const remote = await downloadRemoteOverlay(token);
     const localMeta = getOverlayMeta();
     if(remote && remote.updatedAt && remote.updatedAt > localMeta.updatedAt){
