@@ -1139,6 +1139,16 @@ async function getGraphToken(){
   }
 }
 
+// Microsoft Graph renvoie un corps JSON { error: { code, message } } bien plus parlant que le
+// simple code HTTP (ex. "400 BadRequest: L'utilisateur ne dispose pas d'OneDrive") — sans ça,
+// impossible de distinguer les causes possibles d'un même code HTTP générique.
+async function graphErrorDetail(res){
+  try{
+    const body = await res.json();
+    if(body && body.error) return `${res.status} ${body.error.code||''} ${body.error.message||''}`.trim();
+  }catch(e){ /* pas de corps JSON exploitable */ }
+  return String(res.status);
+}
 // Le dossier applicatif OneDrive ("AppFolder", adressé ici via /special/approot) doit avoir été
 // créé au moins une fois avant de pouvoir adresser un fichier à l'intérieur par chemin
 // (":/nom:/content") : tant qu'il n'existe pas encore (première synchro après une reconnexion,
@@ -1149,14 +1159,14 @@ async function ensureAppRoot(token){
   const res = await fetch('https://graph.microsoft.com/v1.0/me/drive/special/approot', {
     headers: { Authorization: 'Bearer ' + token }
   });
-  if(!res.ok) throw new Error('appfolder init failed: ' + res.status);
+  if(!res.ok) throw new Error('appfolder init failed: ' + await graphErrorDetail(res));
 }
 async function downloadRemoteOverlay(token){
   const res = await fetch(`https://graph.microsoft.com/v1.0/me/drive/special/approot:/${REMOTE_FILE}:/content`, {
     headers: { Authorization: 'Bearer ' + token }
   });
   if(res.status === 404) return null;
-  if(!res.ok) throw new Error('download failed: ' + res.status);
+  if(!res.ok) throw new Error('download failed: ' + await graphErrorDetail(res));
   return res.json();
 }
 async function uploadRemoteOverlay(token, payload){
@@ -1165,7 +1175,7 @@ async function uploadRemoteOverlay(token, payload){
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  if(!res.ok) throw new Error('upload failed: ' + res.status);
+  if(!res.ok) throw new Error('upload failed: ' + await graphErrorDetail(res));
 }
 
 let syncDebounceTimer = null;
