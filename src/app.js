@@ -1166,6 +1166,16 @@ async function downloadRemoteOverlay(token){
     headers: { Authorization: 'Bearer ' + token }
   });
   if(res.status === 404) return null;
+  // Sur un compte OneDrive personnel (grand public), demander le contenu d'un fichier qui
+  // n'existe pas ENCORE dans le dossier applicatif renvoie "400 invalidRequest" au lieu d'un 404
+  // propre (contrairement à OneDrive Entreprise) — observé lors du tout premier essai de
+  // synchronisation. On traite donc ce cas exactement comme une absence de données distantes :
+  // le fichier sera créé par le prochain envoi (upload) des données locales.
+  if(res.status === 400){
+    const detail = await graphErrorDetail(res);
+    if(/invalidRequest/i.test(detail)){ console.warn('download 400 invalidRequest traité comme "fichier absent":', detail); return null; }
+    throw new Error('download failed: ' + detail);
+  }
   if(!res.ok) throw new Error('download failed: ' + await graphErrorDetail(res));
   return res.json();
 }
