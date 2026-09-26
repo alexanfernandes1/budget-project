@@ -344,7 +344,7 @@ function renderDashboard(){
 }
 
 // ===================== RENDER: TRANSACTIONS =====================
-let txFilter = { text:'', cat:'all', status:'all', rec:'all' };
+let txFilter = { text:'', status:'all' };
 let bulkEditMode = false;
 let bulkDraft = [];
 function renderTransactions(){
@@ -361,27 +361,21 @@ function renderTransactions(){
   const showResync = hasOwnAnchor && !!getMonth(prevKeyForResync);
   el.innerHTML = `
     <div class="kpi-bar" id="kpiBar"></div>
-    <div class="section-title">Suivi du budget — ${monthLabel(currentKey)}
-      <span class="hint" style="display:inline-flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn ghost small" id="btnBulkEdit">Modifier en masse</button>
-        <button class="btn ghost small" id="btnNewMonth">Créer le mois suivant à partir de celui-ci</button>
-        ${showResync ? `<button class="btn ghost small" id="btnResyncBalance" title="Recalcule la balance courante et les soldes de livret de ce mois à partir des valeurs en direct de fin ${monthLabel(prevKeyForResync)}, sans toucher aux lignes de ce mois.">Resynchroniser les soldes de départ</button>` : ''}
-      </span>
-    </div>
-    <div class="filter-bar">
-      <button class="scroll-jump-inline" id="scrollDownBtnMobile" title="Aller en bas du tableau" aria-label="Aller en bas du tableau">↓</button>
-      <input type="text" id="txSearch" placeholder="Rechercher un libellé…" value="${esc(txFilter.text)}">
-      <select id="txCatFilter"><option value="all">Toutes catégories</option>${CATEGORY_TYPES.map(c=>`<option value="${c}" ${txFilter.cat===c?'selected':''}>${c}</option>`).join('')}</select>
-      <select id="txStatusFilter">
-        <option value="all" ${txFilter.status==='all'?'selected':''}>Tous statuts</option>
-        <option value="done" ${txFilter.status==='done'?'selected':''}>Traité</option>
-        <option value="pending" ${txFilter.status==='pending'?'selected':''}>À venir</option>
-      </select>
-      <select id="txRecFilter">
-        <option value="all" ${txFilter.rec==='all'?'selected':''}>Récurrent : tous</option>
-        <option value="rec" ${txFilter.rec==='rec'?'selected':''}>🔁 Récurrentes</option>
-        <option value="once" ${txFilter.rec==='once'?'selected':''}>Ponctuelles</option>
-      </select>
+    <div class="tx-sticky-controls">
+      <div class="hint" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <button class="btn premium small" id="btnBulkEdit">Modifier en masse</button>
+        <button class="btn premium small" id="btnNewMonth">Créer le mois suivant à partir de celui-ci</button>
+        ${showResync ? `<button class="btn premium small" id="btnResyncBalance" title="Recalcule la balance courante et les soldes de livret de ce mois à partir des valeurs en direct de fin ${monthLabel(prevKeyForResync)}, sans toucher aux lignes de ce mois.">Resynchroniser les soldes de départ</button>` : ''}
+      </div>
+      <div class="filter-bar">
+        <button class="scroll-jump-inline" id="scrollDownBtnMobile" title="Aller en bas du tableau" aria-label="Aller en bas du tableau">↓</button>
+        <input type="text" id="txSearch" placeholder="Rechercher un libellé…" value="${esc(txFilter.text)}">
+        <select id="txStatusFilter">
+          <option value="all" ${txFilter.status==='all'?'selected':''}>Tous statuts</option>
+          <option value="done" ${txFilter.status==='done'?'selected':''}>Traité</option>
+          <option value="pending" ${txFilter.status==='pending'?'selected':''}>À venir</option>
+        </select>
+      </div>
     </div>
     <div class="panel" style="padding:0;">
       <table class="tx" id="txTable"><thead><tr>
@@ -390,9 +384,7 @@ function renderTransactions(){
     </div>
   `;
   document.getElementById('txSearch').addEventListener('input', e=>{ txFilter.text = e.target.value; renderTxRows(getMonth(currentKey)); });
-  document.getElementById('txCatFilter').addEventListener('change', e=>{ txFilter.cat = e.target.value; renderTxRows(getMonth(currentKey)); });
   document.getElementById('txStatusFilter').addEventListener('change', e=>{ txFilter.status = e.target.value; renderTxRows(getMonth(currentKey)); });
-  document.getElementById('txRecFilter').addEventListener('change', e=>{ txFilter.rec = e.target.value; renderTxRows(getMonth(currentKey)); });
   document.getElementById('btnNewMonth').addEventListener('click', createNextMonth);
   document.getElementById('btnBulkEdit').addEventListener('click', enterBulkEditMode);
   const resyncBtn = document.getElementById('btnResyncBalance');
@@ -400,6 +392,7 @@ function renderTransactions(){
   document.getElementById('scrollDownBtnMobile').addEventListener('click', scrollToTableBottom);
   renderKpiBar(m);
   renderTxRows(m);
+  updateHeaderHeight();
 }
 // Détache les soldes de départ du mois affiché (balance courante + les 4 livrets) de leur
 // ancre figée (SEED ou overlay), pour qu'ils redeviennent dérivés en direct des valeurs de fin
@@ -531,11 +524,8 @@ function renderTxRows(m){
   if(!m){ tbody.innerHTML = `<tr><td colspan="6" class="empty">Mois vide.</td></tr>`; return; }
   let items = m.items.filter(it=>it.item || it.montant);
   if(txFilter.text) items = items.filter(it=> (it.item||'').toLowerCase().includes(txFilter.text.toLowerCase()));
-  if(txFilter.cat!=='all') items = items.filter(it=> getCategoryType(it)===txFilter.cat);
   if(txFilter.status==='done') items = items.filter(it=>it.traite);
   if(txFilter.status==='pending') items = items.filter(it=>!it.traite);
-  if(txFilter.rec==='rec') items = items.filter(it=>it.recurrent);
-  if(txFilter.rec==='once') items = items.filter(it=>!it.recurrent);
 
   if(!items.length){ tbody.innerHTML = `<tr><td colspan="6" class="empty">Aucune ligne ne correspond.</td></tr>`; return; }
 
@@ -572,8 +562,8 @@ function createNextMonth(){
   if(existing && existing.items.some(it=>it.item||it.montant)){
     if(!confirm(`${monthLabel(nextKey)} contient déjà ${existing.items.length} lignes. Les remplacer par les lignes récurrentes de ${monthLabel(currentKey)} ?`)) return;
   }
-  const recurring = cur.items.filter(it=>it.item && it.recurrent).map(it=>({
-    item: it.item, echeance: null, categorie: it.categorie, categorieType: it.categorieType, montant: it.montant, traite:false, recurrent:true
+  const recurring = cur.items.filter(it=>it.item && it.recurrent && (!it.recurrentUntil || nextKey<=it.recurrentUntil)).map(it=>({
+    item: it.item, echeance: null, categorie: it.categorie, categorieType: it.categorieType, montant: it.montant, traite:false, recurrent:true, recurrentUntil: it.recurrentUntil || null
   }));
   if(!recurring.length){ showToast("Aucune ligne récurrente à reprendre — marquez vos dépenses/recettes fixes comme récurrentes."); }
   // balance_prec et les 4 soldes de livret sont explicitement forcés à null (et pas simplement
@@ -622,6 +612,7 @@ function openItemModal(id){
     document.getElementById('f_echeance_confirm').checked = !!it.echeance;
     document.getElementById('f_traite').checked = !!it.traite;
     document.getElementById('f_recurrent').checked = !!it.recurrent;
+    document.getElementById('f_recurrent_until').value = it.recurrentUntil || '';
   }else{
     document.getElementById('f_item').value = '';
     document.getElementById('f_montant').value = '';
@@ -632,11 +623,19 @@ function openItemModal(id){
     document.getElementById('f_echeance_confirm').checked = false;
     document.getElementById('f_traite').checked = false;
     document.getElementById('f_recurrent').checked = false;
+    document.getElementById('f_recurrent_until').value = '';
   }
   categoryTypeTouched = false;
   updateSensLabels();
+  updateRecurrentUntilVisibility();
   bg.classList.add('show');
 }
+// Le champ "jusqu'à quel mois" n'a de sens que si la ligne est récurrente.
+function updateRecurrentUntilVisibility(){
+  const wrap = document.getElementById('f_recurrent_until_wrap');
+  wrap.style.display = document.getElementById('f_recurrent').checked ? '' : 'none';
+}
+document.getElementById('f_recurrent').addEventListener('change', updateRecurrentUntilVisibility);
 // Sur un compte d'épargne, "Dépense"/"Recette" est trompeur (verser sur son Livret A n'est pas
 // vécu comme une "dépense") : on reformule selon le sens réel de l'argent pour ce compte-là.
 function updateSensLabels(){
@@ -657,6 +656,7 @@ document.getElementById('f_item').addEventListener('input', e=>{
 document.getElementById('f_categorie_type').addEventListener('change', e=>{
   categoryTypeTouched = true;
   if(!editingId) document.getElementById('f_recurrent').checked = RECURRING_DEFAULT_CATEGORIES.includes(e.target.value);
+  updateRecurrentUntilVisibility();
 });
 function closeItemModal(){ document.getElementById('itemModalBg').classList.remove('show'); editingId=null; }
 function saveItemModal(){
@@ -669,13 +669,14 @@ function saveItemModal(){
   const echeance = document.getElementById('f_echeance_confirm').checked ? (document.getElementById('f_echeance').value || null) : null;
   const traite = document.getElementById('f_traite').checked;
   const recurrent = document.getElementById('f_recurrent').checked;
+  const recurrentUntil = recurrent ? (document.getElementById('f_recurrent_until').value || null) : null;
   if(montant!==null && sens==='recette' && categorie!=='Salaire') montant = -Math.abs(montant);
   else if(montant!==null) montant = Math.abs(montant);
 
   const monthField = document.getElementById('f_month').value;
   const targetKey = keys.includes(monthField) ? monthField : currentKey;
   const wasEditing = !!editingId;
-  const payload = { item, montant, categorie, categorieType, echeance, traite, recurrent };
+  const payload = { item, montant, categorie, categorieType, echeance, traite, recurrent, recurrentUntil };
 
   if(targetKey === currentKey){
     let m = getMonth(currentKey);
@@ -695,15 +696,41 @@ function saveItemModal(){
     setMonthItems(targetKey, [...target.items, payload]);
   }
 
+  const propagatedCount = (recurrent && recurrentUntil) ? propagateRecurrence(payload, targetKey, recurrentUntil) : 0;
+
   closeItemModal();
   refreshAll();
 
+  const propSuffix = propagatedCount ? ` (reprise sur ${propagatedCount} mois suivant${propagatedCount>1?'s':''})` : '';
   if(targetKey === currentKey){
-    showToast('Ligne enregistrée.');
+    showToast('Ligne enregistrée.' + propSuffix);
   }else{
     const verb = wasEditing ? 'déplacée vers' : 'ajoutée à';
-    showToast(`Ligne ${verb} ${monthLabel(targetKey)}.`, { actionLabel:'Voir', onAction: ()=>{ currentKey = targetKey; refreshAll(); } });
+    showToast(`Ligne ${verb} ${monthLabel(targetKey)}.${propSuffix}`, { actionLabel:'Voir', onAction: ()=>{ currentKey = targetKey; refreshAll(); } });
   }
+}
+// Ajoute la dépense récurrente à tous les mois déjà créés entre fromKey (exclu) et untilKey
+// (inclus), en s'arrêtant dès qu'un mois n'existe pas encore — jamais de création forcée d'un
+// nouveau mois ici (voir createNextMonth pour la suite automatique lors de la création réelle
+// du mois suivant). N'ajoute rien si une ligne récurrente identique (même libellé + compte) est
+// déjà présente dans un mois cible, pour rester ré-appliquable sans dupliquer (ex : on prolonge
+// simplement la date de fin plus tard).
+function propagateRecurrence(sourceItem, fromKey, untilKey){
+  let key = fromKey;
+  let count = 0;
+  while(true){
+    key = shiftKey(key, 1);
+    if(untilKey && key > untilKey) break;
+    const target = getMonth(key);
+    if(!target) break;
+    const alreadyThere = target.items.some(it=> it.recurrent && it.item===sourceItem.item && it.categorie===sourceItem.categorie);
+    if(!alreadyThere){
+      const copy = { item: sourceItem.item, echeance: null, categorie: sourceItem.categorie, categorieType: sourceItem.categorieType, montant: sourceItem.montant, traite:false, recurrent:true, recurrentUntil: untilKey };
+      setMonthItems(key, [...target.items, copy]);
+      count++;
+    }
+  }
+  return count;
 }
 function deleteItemModal(){
   if(!editingId) return;
@@ -920,6 +947,13 @@ function drawDonut(id, byCat, legendId){
 function updateHeaderHeight(){
   const header = document.querySelector('header.top');
   if(header) document.documentElement.style.setProperty('--header-h', header.offsetHeight+'px');
+  // La barre de KPI et le bloc boutons/filtres (Suivi du mois) sont sticky l'un sous l'autre :
+  // on mesure leur hauteur réelle pour empiler correctement leurs offsets (voir .tx-sticky-controls
+  // et table.tx thead th dans app_shell.html). Absents hors de l'onglet Suivi : on retombe à 0.
+  const kpiBar = document.getElementById('kpiBar');
+  document.documentElement.style.setProperty('--kpibar-h', (kpiBar ? kpiBar.offsetHeight : 0)+'px');
+  const controls = document.querySelector('.tx-sticky-controls');
+  document.documentElement.style.setProperty('--controls-h', (controls ? controls.offsetHeight : 0)+'px');
 }
 function refreshAll(){
   _liveBalanceCache = new Map();
