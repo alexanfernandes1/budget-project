@@ -166,47 +166,41 @@
 
   /* ---------- responsive: compact rows on narrow screens (iPhone etc.) ---------- */
   @media (max-width:640px){
-    /* Modification en masse : cartes empilées (plusieurs champs de saisie par ligne, tiennent
-       mal dans un tableau étroit). Le tableau de lecture normal (Suivi du mois) garde, lui, un
-       vrai tableau compact ci-dessous — ses intitulés de colonnes doivent rester réels pour
-       pouvoir se figer avec les boutons/filtres au défilement. */
-    table.tx.edit-mode thead{display:none;}
-    table.tx.edit-mode, table.tx.edit-mode tbody{display:block;width:100%;}
-    table.tx.edit-mode tr{
-      display:flex;flex-wrap:wrap;align-items:flex-start;row-gap:6px;
+    /* Retour à l'affichage en cartes empilées pour le tableau de suivi (l'essai en vrai tableau
+       compact était illisible sur iPhone) : les intitulés de colonnes ne sont donc plus visibles
+       ni figés sur mobile, seuls les boutons/filtres le restent (voir .tx-sticky-controls). */
+    table.tx thead{display:none;}
+    table.tx, table.tx tbody{display:block;width:100%;}
+    table.tx tr{
+      display:flex;flex-wrap:wrap;align-items:center;gap:0 7px;
       border:1px solid var(--line);border-radius:9px;margin-bottom:5px;padding:7px 10px;
       background:var(--panel);
     }
-    table.tx.edit-mode td{display:block;border-bottom:none;padding:0;}
+    table.tx td{display:block;border-bottom:none;padding:0;}
+    table.tx td:nth-child(1){order:1;}                             /* case à cocher */
+    table.tx td:nth-child(2){                                      /* libellé */
+      order:2;flex:1;min-width:0;font-size:13.5px;font-weight:500;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    table.tx td:nth-child(5){order:3;font-size:14px;}              /* montant */
+    table.tx td:nth-child(6){order:4;}                             /* crayon */
+    table.tx tr::after{content:'';width:100%;order:5;}             /* saut de ligne */
+    table.tx td:nth-child(3){order:6;margin-left:auto;margin-top:3px;} /* catégorie, à droite */
+    table.tx td:nth-child(4){order:7;margin-top:3px;}              /* compte */
+    table.tx td:nth-child(3) .tag, table.tx td:nth-child(4) .tag{font-size:9.5px;padding:1px 6px;}
+
+    /* Modification en masse : mise en page dédiée (les champs de saisie pleine largeur cassent
+       la logique de réordonnancement ci-dessus, pensée pour du texte/des tags en lecture seule). */
+    table.tx.edit-mode tr{align-items:flex-start;row-gap:6px;}
+    table.tx.edit-mode td{padding:0;}
     table.tx.edit-mode td:nth-child(1){order:1;padding-top:6px;}
     table.tx.edit-mode td:nth-child(2){order:2;flex:1;min-width:0;font-size:13.5px;font-weight:500;white-space:normal;}
     table.tx.edit-mode td:nth-child(6){order:3;padding-top:4px;}
-    table.tx.edit-mode tr::after{content:'';width:100%;order:4;}
+    table.tx.edit-mode tr::after{order:4;}
     table.tx.edit-mode td:nth-child(3){order:5;flex:1 1 46%;margin:0;}
     table.tx.edit-mode td:nth-child(4){order:6;flex:1 1 46%;margin:0;}
     table.tx.edit-mode td:nth-child(5){order:7;flex:1 1 100%;margin:0;}
     table.tx.edit-mode select{font-size:12.5px;}
-
-    /* Tableau de lecture compact : on resserre plutôt que de passer en cartes, pour garder de
-       vrais <th> (intitulés figés en haut, voir .tx-sticky-controls et table.tx thead th). */
-    /* table-layout:fixed + largeurs explicites : évite que les tags Catégorie/Compte n'écrasent
-       la colonne Libellé (qui a besoin du plus de place) et empêche les coupures de mots moches. */
-    table.tx:not(.edit-mode){font-size:11.5px;table-layout:fixed;}
-    table.tx:not(.edit-mode) th, table.tx:not(.edit-mode) td{padding:6px 5px;}
-    table.tx:not(.edit-mode) th{white-space:normal;letter-spacing:0;line-height:1.25;font-size:9.5px;}
-    table.tx:not(.edit-mode) td:nth-child(2){white-space:normal;overflow-wrap:break-word;}
-    table.tx:not(.edit-mode) .tag{font-size:9px;padding:1px 5px;white-space:normal;}
-    table.tx:not(.edit-mode) th:nth-child(1), table.tx:not(.edit-mode) td:nth-child(1){width:24px;padding-left:8px;padding-right:2px;}
-    table.tx:not(.edit-mode) th:nth-child(2), table.tx:not(.edit-mode) td:nth-child(2){width:35%;}
-    table.tx:not(.edit-mode) th:nth-child(3), table.tx:not(.edit-mode) td:nth-child(3){width:20%;}
-    table.tx:not(.edit-mode) th:nth-child(4), table.tx:not(.edit-mode) td:nth-child(4){width:13%;}
-    table.tx:not(.edit-mode) th:nth-child(5), table.tx:not(.edit-mode) td:nth-child(5){width:21%;white-space:nowrap;}
-    table.tx:not(.edit-mode) th:nth-child(6), table.tx:not(.edit-mode) td:nth-child(6){width:24px;padding-right:8px;}
-    /* Pas de défilement horizontal ici : un overflow-x sur ce conteneur casserait le
-       position:sticky vertical des <th> (l'overflow-y calculé bascule aussi en "auto", ce qui
-       recadre le sticky sur ce conteneur au lieu de la page — comportement de la spec CSS
-       Overflow). Le tableau doit donc tenir dans la largeur de l'écran ; texte du libellé et
-       tags se resserrent/passent à la ligne au lieu de déborder. */
 
     /* Sur petit écran, la flèche bas flottante gêne le tableau : on la remplace par une version
        inline à gauche du champ de recherche (voir .scroll-jump-inline dans la filter-bar). */
